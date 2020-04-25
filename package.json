@@ -1,0 +1,27 @@
+{
+  "name": "live-streamx",
+  "version": "1.0.0",
+  "description": "A live streaming server",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"test\""
+  },
+  "author": "Roshan Bista",
+  "license": "MIT",
+  "dependencies": {
+    "debug": "^4.1.1",
+    "deep-equal": "^2.0.3",
+    "express": "^4.17.1",
+    "mediasoup": "^3.5.9",
+    "mediasoup-client": "^3.6.5",
+    "socket.io": "^2.3.0",
+    "socket.io-client": "^2.3.0"
+  },
+  "devDependencies": {
+    "rollup": "^1.12.4",
+    "rollup-plugin-commonjs": "^10.0.0",
+    "rollup-plugin-json": "^4.0.0",
+    "rollup-plugin-node-builtins": "^2.1.2",
+    "rollup-plugin-node-resolve": "^5.0.0"
+  }
+}
