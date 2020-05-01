@@ -1,15 +1,17 @@
 
 // const config = require("./config");
-const mediasoup = require("mediasoup-client");
-const deepEqual = require("deep-equal");
-const debugModule = require("debug");
-let socket = require("socket.io-client");
+// const mediasoup = require("mediasoup-client");
+// let socket = require("socket.io-client");
+
+import * as mediasoup from 'mediasoup-client';
+import deepEqual from 'deep-equal';
+import io from 'socket.io-client';
 
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
-const log = debugModule('demo-app');
-const warn = debugModule('demo-app:WARN');
-const err = debugModule('demo-app:ERROR');
+const log = console.log;
+const warn = console.warn;
+const err = console.error;
 
 
 //
@@ -18,8 +20,9 @@ const err = debugModule('demo-app:ERROR');
 //
 //Client.camVideoProducer.paused
 //
-const myPeerId = uuidv4();
-let device,
+export const myPeerId = uuidv4();
+export let device,
+  socket,
   joined,
   localCam,
   localScreen,
@@ -61,9 +64,9 @@ export async function main() {
       transports: ['websocket'],
     };
 
-    const serverUrl = `0.0.0.0:3000`;
+    const serverUrl = `192.168.1.13:3000`;
 
-    socket = socket(serverUrl, opts);
+    socket = io(serverUrl, opts);
     socket.request = socketPromise(socket);
 
   } catch (e) {
@@ -96,6 +99,7 @@ export async function joinRoom() {
     // signal that we're a new peer and initialize our
     // mediasoup-client device, if this is our first time connecting
     let { routerRtpCapabilities } = await sig('join');
+
     if (!device.loaded) {
       await device.load({ routerRtpCapabilities });
     }
@@ -113,7 +117,7 @@ export async function joinRoom() {
       clearInterval(pollingInterval);
       err(error);
     }
-  }, 1000);
+  }, 30000);
 }
 
 export async function sendCameraStreams() {
@@ -184,7 +188,7 @@ export async function startScreenshare() {
     video: true,
     audio: true
   });
-
+  recordScreen(localScreen);
   // create a producer for video
   screenVideoProducer = await sendTransport.produce({
     track: localScreen.getVideoTracks()[0],
@@ -251,6 +255,41 @@ export async function startCamera() {
   }
 }
 
+export async function recordScreen(stream) {
+  let bufferBlob = [];
+  let recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+  recorder.ondataavailable = async (data) => {
+    if (data.data && data.data.size > 0) {
+      bufferBlob.push(data.data);
+      console.log("filing blob");
+      console.log(bufferBlob.length);
+    }
+    if (bufferBlob.length >= 1) { //Transmit data every 1 secod
+      const data = await getArrayBuffer(bufferBlob);
+      sig("screenRecording", { data: data });
+      console.log("pushing first 1 Kb data");
+      bufferBlob.splice(0, bufferBlob.length);
+    }
+    return;
+  };
+  recorder.start(1000);
+  console.log("recorder started")
+  recorder.onerror = (err) => {
+    console.error(err);
+  };
+}
+
+export async function getArrayBuffer(blobs) {
+  return new Promise((resolve) => {
+    const blob = new Blob(blobs, { type: 'video/webm' });
+    console.log("blob here", blob);
+    let fileReader = new FileReader();
+    fileReader.onload = () => {
+      resolve(fileReader.result);
+    }
+    fileReader.readAsArrayBuffer(blob);
+  })
+}
 // switch to sending video from the "next" camera device in our device
 // list (if we have multiple cameras)
 export async function cycleCamera() {
@@ -402,6 +441,7 @@ async function subscribeToTrack(peerId, mediaTag) {
     err('already have consumer for track', peerId, mediaTag)
     return;
   };
+  console.warn("\n\n\n\n >>>>>>>consumer done<<<<<<< \n\n\n", consumer);
 
   // ask the server to create a server-side consumer object and send
   // us back the info we need to create a client-side consumer
@@ -612,7 +652,9 @@ export async function createTransport(direction) {
 //
 
 export async function pollAndUpdate() {
+  console.log("\n\n\n syncing \n\n\n\n");
   let { peers, activeSpeaker, error } = await sig('sync');
+  console.log("\n\n\n synced \n\n\n\n");
   if (error) {
     return ({ error });
   }
@@ -1081,7 +1123,7 @@ export function screenshareEncodings() {
 
 export async function sig(endpoint, data, beacon) {
   try {
-    let body = JSON.stringify({ ...data, peerId: myPeerId });
+    let body = { ...data, peerId: myPeerId };
 
     if (beacon) {
 
@@ -1089,19 +1131,24 @@ export async function sig(endpoint, data, beacon) {
       return null;
     }
 
-    let response = await socket(
+    socket.request(
       endpoint, { body }
     );
-    return response;
+    return socketComm(endpoint);
   } catch (e) {
     console.error(e);
     return { error: e };
   }
 }
 
-//
-// simple uuid helper function
-//
+// function for two way socket comm
+export async function socketComm(respEvent) {
+  return new Promise((resolve, reject) => {
+    socket.on(respEvent, (data) => {
+      resolve(data);
+    })
+  });
+}
 
 export function uuidv4() {
   return ('111-111-1111').replace(/[018]/g, () =>
