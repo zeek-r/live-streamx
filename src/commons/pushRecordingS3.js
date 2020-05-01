@@ -8,6 +8,8 @@ AWS.config.update({
   region: config.s3Region
 });
 
+const s3 = new AWS.S3();
+
 function putFile({ key = "", bucket = "", body }) {
   const s3Params = {
     Key: key,
@@ -19,10 +21,11 @@ function putFile({ key = "", bucket = "", body }) {
 
 
 function pushRecordingS3({ file, fileName }) {
-  const stream = fs.createReadStream(file);
+  const stream = fs.createReadStream(`./${file}`);
+  console.log("file here", file);
   return putFile({
     key: `recordings/${fileName || file}`,
-    bucket: config.s3Bucket,
+    bucket: config.bucket,
     body: stream
   })
 }
