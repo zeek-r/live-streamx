@@ -9,6 +9,7 @@
   "author": "Roshan Bista",
   "license": "MIT",
   "dependencies": {
+    "aws-sdk": "^2.667.0",
     "debug": "^4.1.1",
     "deep-equal": "^2.0.3",
     "express": "^4.17.1",
