@@ -1,16 +1,11 @@
 const config = require("../../../commons/config");
 const mediasoup = require("mediasoup");
+const { pushRecordingS3 } = require("../../../commons/pushRecordingS3");
 const log = console.log;
-const err = console.err;
+const err = console.error;
 const warn = console.warn;
 
 const init = async (socketServer) => {
-  // let producer;
-  // let consumer;
-  // let producerTransport;
-  // let consumerTransport;
-  // let mediasoupRouter;
-  // let worker;
   const roomState = {
     // external
     peers: {},
@@ -18,7 +13,8 @@ const init = async (socketServer) => {
     // internal
     transports: {},
     producers: [],
-    consumers: []
+    consumers: [],
+    recorder: {}
   }
 
   // Runs mediasoup server
@@ -61,18 +57,31 @@ const init = async (socketServer) => {
   }
 
   // To be refactored later
-  await runMediasoupWorker();
+  let { worker, router, audioLevelObserver } = await runMediasoupWorker();
+  let recordingFile = null;
+  let recordingWriteStream = null;
 
   socketServer.on('connection', (socket) => {
     console.log(`client connected ${socket.id}`);
 
-    // inform the client about existence of producer
-    // if (producer) {
-    //   socket.emit('newProducer');
-    // }
+    const socketComm = function (respEvent, data) {
+      socket.emit(respEvent, data);
+    }
 
-    socket.on('disconnect', () => {
+    async function handleRecording() {
+      try {
+        if (recordingFile && recordingWriteStream) {
+          await pushRecordingS3(recordingFile);
+          recordingFile = null;
+          recordingWriteStream = null;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
+    socket.on('disconnect', async () => {
       console.log('client disconnected');
+      handleRecording();
     });
 
     socket.on('connect_error', (err) => {
@@ -80,7 +89,7 @@ const init = async (socketServer) => {
     });
 
     socket.on('sync', async (data, callback) => {
-      let { peerId } = data;
+      let { peerId } = (data.body);
       try {
         // make sure this peer is connected. if we've disconnected the
         // peer because of a network outage we want the peer to know that
@@ -92,19 +101,21 @@ const init = async (socketServer) => {
         // update our most-recently-seem timestamp -- we're not stale!
         roomState.peers[peerId].lastSeenTs = Date.now();
 
-        callback({
+        socketComm('sync', {
           peers: roomState.peers,
           activeSpeaker: roomState.activeSpeaker
         });
+        callback();
       } catch (e) {
         console.error(e.message);
-        callback({ error: e.message });
+        socketComm({ error: e.message });
+        callback();
       }
     });
 
     socket.on('join', async (data, callback) => {
       try {
-        let { peerId } = data,
+        let { peerId } = (data.body),
           now = Date.now();
         log('join-as-new-peer', peerId);
 
@@ -114,23 +125,25 @@ const init = async (socketServer) => {
           media: {}, consumerLayers: {}, stats: {}
         };
 
-        callback({ routerRtpCapabilities: router.rtpCapabilities });
+        socketComm('join', { routerRtpCapabilities: router.rtpCapabilities });
+        callback();
       } catch (e) {
         console.error('error in /signaling/join-as-new-peer', e);
-        callback({ error: e });
+        socketComm('join', { error: e });
+        callback();
       }
     })
 
     socket.on('leave', async (data, callback) => {
       try {
-        let { peerId } = data;
+        let { peerId } = (data.body);
         log('leave', peerId);
 
         await closePeer(peerId);
-        callback({ left: true });
+        socketComm('leave', { left: true });
       } catch (e) {
         console.error('error in /signaling/leave', e);
-        callback({ error: e });
+        socketComm('leave', { error: e });
       }
     });
 
@@ -164,7 +177,7 @@ const init = async (socketServer) => {
       log('closing producer', producer.id, producer.appData);
       try {
         await producer.close();
-
+        handleRecording();
         // remove this producer from our roomState.producers list
         roomState.producers = roomState.producers
           .filter((p) => p.id !== producer.id);
@@ -193,121 +206,138 @@ const init = async (socketServer) => {
     }
 
     socket.on('getRouterRtpCapabilities', (data, callback) => {
-      callback(mediasoupRouter.rtpCapabilities);
+      socketComm('getRouterRtpCapabilities', router.rtpCapabilities);
     });
 
-    socket.on('createTransport', async (data, callback) => {
-      try {
-        let { peerId, direction } = data;
-        log('create-transport', peerId, direction);
-
-        let transport = await createWebRtcTransport({ peerId, direction });
-        roomState.transports[transport.id] = transport;
-
-        let { id, iceParameters, iceCandidates, dtlsParameters } = transport;
-        callback({
-          transportOptions: { id, iceParameters, iceCandidates, dtlsParameters }
-        });
-      } catch (e) {
-        console.error('error in /signaling/create-transport', e);
-        callback({ error: e });
-      }
-    });
 
     async function createWebRtcTransport({ peerId, direction }) {
       const {
         listenIps,
         initialAvailableOutgoingBitrate
       } = config.mediasoup.webRtcTransport;
-
+      log("creating web transport", peerId, direction);
       const transport = await router.createWebRtcTransport({
         listenIps: listenIps,
         enableUdp: true,
         enableTcp: true,
         preferUdp: true,
         initialAvailableOutgoingBitrate: initialAvailableOutgoingBitrate,
-        appData: { peerId, clientDirection: direction }
+        appData: { peerId: peerId, clientDirection: direction }
       });
-
       return transport;
     }
+
+    socket.on('createTransport', async (data, callback) => {
+      try {
+        log('create-transport', (data.body));
+
+        log("creating web transport");
+
+        const transport = await createWebRtcTransport((data.body));
+
+        roomState.transports[transport.id] = transport;
+
+        let { id, iceParameters, iceCandidates, dtlsParameters } = transport;
+        socketComm('createTransport', {
+          transportOptions: { id, iceParameters, iceCandidates, dtlsParameters }
+        });
+      } catch (e) {
+        console.error('error in /signaling/create-transport', e);
+        socketComm('createTransport', { error: e });
+      }
+    });
 
     socket.on('connectTransport', async (data, callback) => {
 
       try {
-        let { peerId, transportId, dtlsParameters } = data,
+        let { peerId, transportId, dtlsParameters } = (data.body),
           transport = roomState.transports[transportId];
 
         if (!transport) {
           err(`connect-transport: server-side transport ${transportId} not found`);
-          callback({ error: `server-side transport ${transportId} not found` });
+          socketComm('connectTransport', { error: `server-side transport ${transportId} not found` });
           return;
         }
 
-        log('connect-transport', peerId, transport.appData);
 
         await transport.connect({ dtlsParameters });
-        callback({ connected: true });
+        socketComm('connectTransport', { connected: true });
       } catch (e) {
         console.error('error in /signaling/connect-transport', e);
-        callback({ error: e });
+        socketComm('connectTransport', { error: e });
       }
-
-      await producerTransport.connect({ dtlsParameters: data.dtlsParameters });
-      callback();
     });
 
     socket.on('closeTransport', async (data, callback) => {
       try {
-        let { peerId, transportId } = data,
+        let { peerId, transportId } = (data.body),
           transport = roomState.transports[transportId];
 
         if (!transport) {
           err(`close-transport: server-side transport ${transportId} not found`);
-          callback({ error: `server-side transport ${transportId} not found` });
+          socketComm('closeTransport', { error: `server-side transport ${transportId} not found` });
           return;
         }
 
         log('close-transport', peerId, transport.appData);
 
         await closeTransport(transport);
-        callback({ closed: true });
+        socketComm('closeTransport', { closed: true });
       } catch (e) {
         console.error('error in /signaling/close-transport', e);
-        callback({ error: e.message });
+        socketComm('closeTransport', { error: e.message });
       }
     })
 
+    // Recording
+
+    socket.on("screenRecording", (data, callback) => {
+      console.log("data here", data);
+      const body = (data.body);
+      const uint8 = new Uint8Array(body.data);
+
+      if (!recordingFile && !recordingWriteStream) {
+        const fs = require("fs");
+        recordingFile = `Recording-${new Date()}`;
+        recordingWriteStream = fs.createWriteStream(`./recordings/${recordingFile}`, { flags: 'a' });
+      }
+      recordingWriteStream.write(Buffer.from(uint8));
+      callback();
+    });
+    // Recording
+
+
     socket.on('closeProducer', async (data, callback) => {
       try {
-        let { peerId, producerId } = data,
+        let { peerId, producerId } = (data.body),
           producer = roomState.producers.find((p) => p.id === producerId);
 
         if (!producer) {
           err(`close-producer: server-side producer ${producerId} not found`);
-          callback({ error: `server-side producer ${producerId} not found` });
+          socketComm('closeProducer', { error: `server-side producer ${producerId} not found` });
           return;
         }
 
         log('close-producer', peerId, producer.appData);
-
         await closeProducer(producer);
-        callback({ closed: true });
+        socketComm('closeProducer', { closed: true });
+        pushRecordingS3(recordingFile);
+
       } catch (e) {
         console.error(e);
-        callback({ error: e.message });
+        socketComm('closeProducer', { error: e.message });
       }
     });
 
     socket.on('sendTrack', async (data, callback) => {
       try {
         let { peerId, transportId, kind, rtpParameters,
-          paused = false, appData } = data,
+          paused = false, appData } = (data.body),
           transport = roomState.transports[transportId];
 
         if (!transport) {
           err(`send-track: server-side transport ${transportId} not found`);
-          callback({ error: `server-side transport ${transportId} not found` });
+          socketComm('sendTrack', { error: `server-side transport ${transportId} not found` });
           return;
         }
 
@@ -317,7 +347,6 @@ const init = async (socketServer) => {
           paused,
           appData: { ...appData, peerId, transportId }
         });
-
         // if our associated transport closes, close ourself, too
         producer.on('transportclose', () => {
           log('producer\'s transport closed', producer.id);
@@ -337,14 +366,14 @@ const init = async (socketServer) => {
           encodings: rtpParameters.encodings
         };
 
-        callback({ id: producer.id });
+        socketComm('sendTrack', { id: producer.id });
       } catch (e) {
       }
     });
 
     socket.on('receiveTrack', async (data, callback) => {
       try {
-        let { peerId, mediaPeerId, mediaTag, rtpCapabilities } = data;
+        let { peerId, mediaPeerId, mediaTag, rtpCapabilities } = (data.body);
 
         let producer = roomState.producers.find(
           (p) => p.appData.mediaTag === mediaTag &&
@@ -355,7 +384,7 @@ const init = async (socketServer) => {
           let msg = 'server-side producer for ' +
             `${mediaPeerId}:${mediaTag} not found`;
           err('recv-track: ' + msg);
-          callback({ error: msg });
+          socketComm('receiveTransport', { error: msg });
           return;
         }
 
@@ -365,7 +394,7 @@ const init = async (socketServer) => {
         })) {
           let msg = `client cannot consume ${mediaPeerId}:${mediaTag}`;
           err(`recv-track: ${peerId} ${msg}`);
-          callback({ error: msg });
+          socketComm('receiveTransport', { error: msg });
           return;
         }
 
@@ -376,7 +405,7 @@ const init = async (socketServer) => {
         if (!transport) {
           let msg = `server-side recv transport for ${peerId} not found`;
           err('recv-track: ' + msg);
-          callback({ error: msg });
+          socketComm('receiveTransport', { error: msg });
           return;
         }
 
@@ -417,8 +446,8 @@ const init = async (socketServer) => {
               .currentLayer = layers && layers.spatialLayer;
           }
         });
-
-        callback({
+        log("recv transport");
+        socketComm('receiveTrack', {
           producerId: producer.id,
           id: consumer.id,
           kind: consumer.kind,
@@ -428,18 +457,18 @@ const init = async (socketServer) => {
         });
       } catch (e) {
         console.error('error in /signaling/recv-track', e);
-        callback({ error: e });
+        socketComm('receiveTrack', { error: e });
       }
     });
 
     socket.on('pauseConsumer', async (data, callback) => {
       try {
-        let { peerId, consumerId } = data,
+        let { peerId, consumerId } = (data.body),
           consumer = roomState.consumers.find((c) => c.id === consumerId);
 
         if (!consumer) {
           err(`pause-consumer: server-side consumer ${consumerId} not found`);
-          callback({ error: `server-side producer ${consumerId} not found` });
+          socketComm('pauseConsumer', { error: `server-side producer ${consumerId} not found` });
           return;
         }
 
@@ -447,21 +476,21 @@ const init = async (socketServer) => {
 
         await consumer.pause();
 
-        callback({ paused: true });
+        socketComm('pauseConsumer', { paused: true });
       } catch (e) {
         console.error('error in /signaling/pause-consumer', e);
-        callback({ error: e });
+        socketComm('pauseConsumer', { error: e });
       }
     });
 
     socket.on('resumeConsumer', async (data, callback) => {
       try {
-        let { peerId, consumerId } = data,
+        let { peerId, consumerId } = (data.body),
           consumer = roomState.consumers.find((c) => c.id === consumerId);
 
         if (!consumer) {
           err(`pause-consumer: server-side consumer ${consumerId} not found`);
-          callback({ error: `server-side consumer ${consumerId} not found` });
+          socketComm('resumeConsumer', { error: `server-side consumer ${consumerId} not found` });
           return;
         }
 
@@ -469,41 +498,41 @@ const init = async (socketServer) => {
 
         await consumer.resume();
 
-        callback({ resumed: true });
+        socketComm('resumeConsumer', { resumed: true });
       } catch (e) {
         console.error('error in /signaling/resume-consumer', e);
-        callback({ error: e });
+        socketComm('resumeConsumer', { error: e });
       }
     });
 
     socket.on('closeConsumer', async (data, callback) => {
       try {
-        let { peerId, consumerId } = data,
+        let { peerId, consumerId } = (data.body),
           consumer = roomState.consumers.find((c) => c.id === consumerId);
 
         if (!consumer) {
           err(`close-consumer: server-side consumer ${consumerId} not found`);
-          callback({ error: `server-side consumer ${consumerId} not found` });
+          socketComm('closeConsumer', { error: `server-side consumer ${consumerId} not found` });
           return;
         }
 
         await closeConsumer(consumer);
 
-        callback({ closed: true });
+        socketComm('closeConsumer', { closed: true });
       } catch (e) {
         console.error('error in /signaling/close-consumer', e);
-        callback({ error: e });
+        socketComm('closeConsumer', { error: e });
       }
     });
 
     socket.on('consumer-set-layers', async (data, callback) => {
       try {
-        let { peerId, consumerId, spatialLayer } = data,
+        let { peerId, consumerId, spatialLayer } = (data.body),
           consumer = roomState.consumers.find((c) => c.id === consumerId);
 
         if (!consumer) {
           err(`consumer-set-layers: server-side consumer ${consumerId} not found`);
-          callback({ error: `server-side consumer ${consumerId} not found` });
+          socketComm('consumer-set-layers', { error: `server-side consumer ${consumerId} not found` });
           return;
         }
 
@@ -511,21 +540,21 @@ const init = async (socketServer) => {
 
         await consumer.setPreferredLayers({ spatialLayer });
 
-        callback({ layersSet: true });
+        socketComm('consumer-set-layers', { layersSet: true });
       } catch (e) {
         console.error('error in /signaling/consumer-set-layers', e);
-        callback({ error: e });
+        socketComm('consumer-set-layers', { error: e });
       }
     });
 
     socket.on('pauseProducer', async (data, callback) => {
       try {
-        let { peerId, producerId } = data,
+        let { peerId, producerId } = (data.body),
           producer = roomState.producers.find((p) => p.id === producerId);
 
         if (!producer) {
           err(`pause-producer: server-side producer ${producerId} not found`);
-          callback({ error: `server-side producer ${producerId} not found` });
+          socketComm('pauseProducer', { error: `server-side producer ${producerId} not found` });
           return;
         }
 
@@ -535,21 +564,21 @@ const init = async (socketServer) => {
 
         roomState.peers[peerId].media[producer.appData.mediaTag].paused = true;
 
-        callback({ paused: true });
+        socketComm('pauseProducer', { paused: true });
       } catch (e) {
         console.error('error in /signaling/pause-producer', e);
-        callback({ error: e });
+        socketComm('pauseProducer', { error: e });
       }
     });
 
     socket.on('resumeProducer', async (data, callback) => {
       try {
-        let { peerId, producerId } = data,
+        let { peerId, producerId } = (data.body),
           producer = roomState.producers.find((p) => p.id === producerId);
 
         if (!producer) {
           err(`resume-producer: server-side producer ${producerId} not found`);
-          callback({ error: `server-side producer ${producerId} not found` });
+          socketComm('resumeProducer', { error: `server-side producer ${producerId} not found` });
           return;
         }
 
@@ -559,10 +588,10 @@ const init = async (socketServer) => {
 
         roomState.peers[peerId].media[producer.appData.mediaTag].paused = false;
 
-        callback({ resumed: true });
+        socketComm('resumeProducer', { resumed: true });
       } catch (e) {
         console.error('error in /signaling/resume-producer', e);
-        callback({ error: e });
+        socketComm('resumeProducer', { error: e });
       }
     })
 
@@ -605,41 +634,8 @@ const init = async (socketServer) => {
       }
     }
 
-
-
-    // creates webrtc transport
-    async function createWebRtcTransport() {
-      const {
-        maxIncomingBitrate,
-        initialAvailableOutgoingBitrate
-      } = config.mediasoup.webRtcTransport;
-
-      const transport = await mediasoupRouter.createWebRtcTransport({
-        listenIps: config.mediasoup.webRtcTransport.listenIps,
-        enableUdp: true,
-        enableTcp: true,
-        preferUdp: true,
-        initialAvailableOutgoingBitrate,
-      });
-      if (maxIncomingBitrate) {
-        try {
-          await transport.setMaxIncomingBitrate(maxIncomingBitrate);
-        } catch (error) {
-        }
-      }
-      return {
-        transport,
-        params: {
-          id: transport.id,
-          iceParameters: transport.iceParameters,
-          iceCandidates: transport.iceCandidates,
-          dtlsParameters: transport.dtlsParameters
-        },
-      };
-    }
-
     async function createConsumer(producer, rtpCapabilities) {
-      if (!mediasoupRouter.canConsume(
+      if (!router.canConsume(
         {
           producerId: producer.id,
           rtpCapabilities,
