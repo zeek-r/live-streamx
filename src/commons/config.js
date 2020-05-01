@@ -2,6 +2,10 @@ module.exports = {
   listenIp: '0.0.0.0',
   listenPort: 3000,
   apiPort: 3000,
+  s3AccessKey: "AKIAZ4OHG7WIVQDOOACN",
+  s3SecretKey: "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",
+  s3Region: "us-east-1",
+  bucket: "vod-lms",
   useLocal: true,
   sslCrt: '/etc/ssl/certs/ssl-cert-snakeoil.pem',
   sslKey: '/etc/ssl/private/ssl-cert-snakeoil.key',
@@ -50,7 +54,7 @@ module.exports = {
     webRtcTransport: {
       listenIps: [
         {
-          ip: '127.0.0.1',
+          ip: '192.168.1.13',
           announcedIp: null,
         }
       ],
