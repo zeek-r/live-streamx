@@ -71,7 +71,7 @@ const init = async (socketServer) => {
     async function handleRecording() {
       try {
         if (recordingFile && recordingWriteStream) {
-          await pushRecordingS3(recordingFile);
+          await pushRecordingS3({ file: `recordings/${recordingFile}` });
           recordingFile = null;
           recordingWriteStream = null;
         }
@@ -321,7 +321,7 @@ const init = async (socketServer) => {
         log('close-producer', peerId, producer.appData);
         await closeProducer(producer);
         socketComm('closeProducer', { closed: true });
-        pushRecordingS3(recordingFile);
+        handleRecording();
 
       } catch (e) {
         console.error(e);
