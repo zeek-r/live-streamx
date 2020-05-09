@@ -428,51 +428,55 @@ export async function leaveRoom() {
 
 async function subscribeToTrack(peerId, mediaTag) {
   log('subscribe to track', peerId, mediaTag);
+  try {
+    // create a receive transport if we don't already have one
+    if (!recvTransport) {
+      recvTransport = await createTransport('recv');
+    }
 
-  // create a receive transport if we don't already have one
-  if (!recvTransport) {
-    recvTransport = await createTransport('recv');
+    // if we do already have a consumer, we shouldn't have called this
+    // method
+    let consumer = findConsumerForTrack(peerId, mediaTag);
+    if (consumer) {
+      err('already have consumer for track', peerId, mediaTag)
+      return;
+    };
+
+    // ask the server to create a server-side consumer object and send
+    // us back the info we need to create a client-side consumer
+    let consumerParameters = await sig('receiveTrack', {
+      mediaTag,
+      mediaPeerId: peerId,
+      rtpCapabilities: device.rtpCapabilities
+    });
+
+    log('consumer parameters', consumerParameters);
+    consumer = await recvTransport.consume({
+      ...consumerParameters,
+      appData: { peerId, mediaTag }
+    });
+    log('created new consumer', consumer.id);
+
+    // the server-side consumer will be started in paused state. wait
+    // until we're connected, then send a resume request to the server
+    // to get our first keyframe and start displaying video
+    while (recvTransport.connectionState !== 'connected') {
+      log('  transport connstate', recvTransport.connectionState);
+      await sleep(100);
+    }
+    // okay, we're ready. let's ask the peer to send us media
+    await resumeConsumer(consumer);
+
+    // keep track of all our consumers
+    consumers.push(consumer);
+
+    // ui
+    await addVideoAudio(consumer);
+    updatePeersDisplay();
+
+  } catch (error) {
+    console.error(error);
   }
-
-  // if we do already have a consumer, we shouldn't have called this
-  // method
-  let consumer = findConsumerForTrack(peerId, mediaTag);
-  if (consumer) {
-    err('already have consumer for track', peerId, mediaTag)
-    return;
-  };
-  console.warn("\n\n\n\n >>>>>>>consumer done<<<<<<< \n\n\n", consumer);
-
-  // ask the server to create a server-side consumer object and send
-  // us back the info we need to create a client-side consumer
-  let consumerParameters = await sig('receiveTrack', {
-    mediaTag,
-    mediaPeerId: peerId,
-    rtpCapabilities: device.rtpCapabilities
-  });
-  log('consumer parameters', consumerParameters);
-  consumer = await recvTransport.consume({
-    ...consumerParameters,
-    appData: { peerId, mediaTag }
-  });
-  log('created new consumer', consumer.id);
-
-  // the server-side consumer will be started in paused state. wait
-  // until we're connected, then send a resume request to the server
-  // to get our first keyframe and start displaying video
-  while (recvTransport.connectionState !== 'connected') {
-    log('  transport connstate', recvTransport.connectionState);
-    await sleep(100);
-  }
-  // okay, we're ready. let's ask the peer to send us media
-  await resumeConsumer(consumer);
-
-  // keep track of all our consumers
-  consumers.push(consumer);
-
-  // ui
-  await addVideoAudio(consumer);
-  updatePeersDisplay();
 }
 
 export async function unsubscribeFromTrack(peerId, mediaTag) {
