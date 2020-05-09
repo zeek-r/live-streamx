@@ -19,7 +19,7 @@ export default [
         browser: true
       }),
       commonJS({
-        include: ['node_modules/**', 'src/commons/config.js']
+        include: ['node_modules/**', './client-config.js']
       }),
     ]
   }
