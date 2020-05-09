@@ -9,9 +9,10 @@
   "author": "Roshan Bista",
   "license": "MIT",
   "dependencies": {
-    "aws-sdk": "^2.667.0",
+    "aws-sdk": "^2.673.0",
     "debug": "^4.1.1",
     "deep-equal": "^2.0.3",
+    "dotenv": "^8.2.0",
     "express": "^4.17.1",
     "mediasoup": "^3.5.9",
     "mediasoup-client": "^3.6.5",
