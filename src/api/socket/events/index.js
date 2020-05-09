@@ -19,11 +19,22 @@ const init = async (socketServer) => {
 
   // Runs mediasoup server
   async function runMediasoupWorker() {
+    const fs = require("fs");
+    let key, cert;
+    try {
+      key = await fs.promises.readFile(config.sslKey);
+      cert = await fs.promises.readFile(config.sslCrt);
+    } catch (error) {
+      throw error
+    }
+
     let worker = await mediasoup.createWorker({
       logLevel: config.mediasoup.worker.logLevel,
       logTags: config.mediasoup.worker.logTags,
       rtcMinPort: config.mediasoup.worker.rtcMinPort,
       rtcMaxPort: config.mediasoup.worker.rtcMaxPort,
+      dtlsCertificateFile: cert,
+      dtlsPrivateKeyFile: key
     });
 
     worker.on('died', () => {

@@ -3,9 +3,13 @@ const socketServer = require("./socket");
 
 
 async function init(app) {
-  const http = httpServer.init();
-  await socketServer.init(http);
-  return { server: http };
+  try {
+    const http = await httpServer.init();
+    await socketServer.init(http);
+    return { server: http };
+  } catch (error) {
+    throw error
+  }
 }
 
 module.exports = { init }

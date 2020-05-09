@@ -1,12 +1,12 @@
 const express = require("express");
 const config = require("../../commons/config");
-const init = () => {
+
+const init = async () => {
   http = express();
   http.use(express.json());
 
   // remove this after app is deployed
   if (config.useLocal) {
-    console.log(config.useLocal, process.cwd());
     http.use(express.static(process.cwd() + "/src"));
   }
 
@@ -23,6 +23,20 @@ const init = () => {
     }
   });
 
+  console.log(config.sslCrt, config.sslCrt)
+  if (config.sslKey && config.sslCrt) {
+    console.log("https here")
+    const fs = require("fs");
+    try {
+      const credentials = {
+        key: await fs.promises.readFile(config.sslKey),
+        cert: await fs.promises.readFile(config.sslCrt)
+      }
+      return require("https").createServer(credentials, http);
+    } catch (error) {
+      throw error
+    }
+  }
   return require("http").createServer(http);
 }
 
