@@ -1,11 +1,11 @@
 
-// const config = require("./config");
 // const mediasoup = require("mediasoup-client");
 // let socket = require("socket.io-client");
 
 import * as mediasoup from 'mediasoup-client';
 import deepEqual from 'deep-equal';
 import io from 'socket.io-client';
+import config from "./client-config";
 
 const $ = document.querySelector.bind(document);
 const $$ = document.querySelectorAll.bind(document);
@@ -64,7 +64,7 @@ export async function main() {
       transports: ['websocket'],
     };
 
-    const serverUrl = `192.168.1.13:3000`;
+    const serverUrl = config.apiUrl;
 
     socket = io(serverUrl, opts);
     socket.request = socketPromise(socket);
