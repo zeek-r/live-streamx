@@ -1,5 +1,5 @@
 const fs = require("fs");
-const config = require("./config");
+const config = require("../commons/config/");
 const AWS = require("aws-sdk");
 
 AWS.config.update({
