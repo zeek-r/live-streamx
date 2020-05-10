@@ -461,7 +461,7 @@ async function subscribeToTrack(peerId, mediaTag) {
     // until we're connected, then send a resume request to the server
     // to get our first keyframe and start displaying video
     while (recvTransport.connectionState !== 'connected') {
-      log('  transport connstate', recvTransport.connectionState);
+      log('  transport connstate', recvTransport.connectionState, consumerParameters, recvTransport);
       await sleep(100);
     }
     // okay, we're ready. let's ask the peer to send us media
