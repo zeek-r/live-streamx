@@ -25,7 +25,7 @@ const init = async (socketServer) => {
       key = await fs.promises.readFile(config.sslKey);
       cert = await fs.promises.readFile(config.sslCrt);
     } catch (error) {
-      throw error
+      console.error(error);
     }
 
     let worker = await mediasoup.createWorker({
