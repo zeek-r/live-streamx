@@ -19860,6 +19860,7 @@ var Client = (function (exports) {
 	exports.currentActiveSpeaker = {};
 	  exports.lastPollSyncData = {};
 	  exports.consumers = [];
+	  let pollingInterval;
 
 	//
 	// entry point -- called by document.body.onload
@@ -19934,14 +19935,15 @@ var Client = (function (exports) {
 	    return;
 	  }
 
+	  startSync();
 	  // super-simple signaling: let's poll at 1-second intervals
-	  exports.pollingInterval = setInterval(async () => {
-	    let { error } = await pollAndUpdate();
-	    if (error) {
-	      clearInterval(exports.pollingInterval);
-	      err(error);
-	    }
-	  }, 30000);
+	  // pollingInterval = setInterval(async () => {
+	  //   let { error } = await pollAndUpdate();
+	  //   if (error) {
+	  //     clearInterval(pollingInterval);
+	  //     err(error);
+	  //   }
+	  // }, 3000);
 	}
 
 	async function sendCameraStreams() {
@@ -20207,7 +20209,7 @@ var Client = (function (exports) {
 	  $('#leave-room').style.display = 'none';
 
 	  // stop polling
-	  clearInterval(exports.pollingInterval);
+	  clearInterval(pollingInterval);
 
 	  // close everything on the server-side (transports, producers, consumers)
 	  let { error } = await sig('leave');
@@ -20479,10 +20481,18 @@ var Client = (function (exports) {
 	// polling/update logic
 	//
 
-	async function pollAndUpdate() {
-	  console.log("\n\n\n syncing \n\n\n\n");
-	  let { peers, activeSpeaker, error } = await sig('sync');
-	  console.log("\n\n\n synced \n\n\n\n");
+	async function startSync() {
+	  exports.socket.on('sync', async (data) => {
+	    try {
+	      await pollAndUpdate(data);
+	    } catch (err) {
+	      console.error(err);
+	    }
+	  });
+	}
+
+	async function pollAndUpdate(data) {
+	  let { peers, activeSpeaker, error } = data;
 	  if (error) {
 	    return ({ error });
 	  }
@@ -21015,6 +21025,7 @@ var Client = (function (exports) {
 	exports.pauseConsumer = pauseConsumer;
 	exports.pauseProducer = pauseProducer;
 	exports.pollAndUpdate = pollAndUpdate;
+	exports.pollingInterval = pollingInterval;
 	exports.recordScreen = recordScreen;
 	exports.removeVideoAudio = removeVideoAudio;
 	exports.resumeConsumer = resumeConsumer;
@@ -21028,6 +21039,7 @@ var Client = (function (exports) {
 	exports.sortPeers = sortPeers;
 	exports.startCamera = startCamera;
 	exports.startScreenshare = startScreenshare;
+	exports.startSync = startSync;
 	exports.stopStreams = stopStreams;
 	exports.unsubscribeFromTrack = unsubscribeFromTrack;
 	exports.updateActiveSpeaker = updateActiveSpeaker;
