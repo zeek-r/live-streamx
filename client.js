@@ -68,7 +68,7 @@ export async function main() {
 
     socket = io(serverUrl, opts);
     socket.request = socketPromise(socket);
-
+    startSync(socket);
   } catch (e) {
     if (e.name === 'UnsupportedError') {
       console.error('browser not supported for video calls');
@@ -86,7 +86,10 @@ export async function main() {
 //
 // meeting control actions
 //
-
+export async function startSync(socket) {
+  log('starting sync');
+  socket.on('sync', pollAndUpdate);
+}
 export async function joinRoom() {
   if (joined) {
     return;
@@ -109,15 +112,6 @@ export async function joinRoom() {
     console.error(e);
     return;
   }
-
-  // super-simple signaling: let's poll at 1-second intervals
-  pollingInterval = setInterval(async () => {
-    let { error } = await pollAndUpdate();
-    if (error) {
-      clearInterval(pollingInterval);
-      err(error);
-    }
-  }, 30000);
 }
 
 export async function sendCameraStreams() {
@@ -655,9 +649,9 @@ export async function createTransport(direction) {
 // polling/update logic
 //
 
-export async function pollAndUpdate() {
+export async function pollAndUpdate(data) {
   console.log("\n\n\n syncing \n\n\n\n");
-  let { peers, activeSpeaker, error } = await sig('sync');
+  let { peers, activeSpeaker, error } = data;
   console.log("\n\n\n synced \n\n\n\n");
   if (error) {
     return ({ error });
