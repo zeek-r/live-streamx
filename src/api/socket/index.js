@@ -1,5 +1,7 @@
 const socket = require("socket.io");
 const events = require("./events");
+const handlers = require("./handlers");
+const mediasoupServer = require("../../app/infrastructure/mediasoup");
 
 const init = async (webServer) => {
   const socketServer = socket(webServer, {
@@ -7,7 +9,9 @@ const init = async (webServer) => {
     path: '/server',
     log: true,
   });
-  await events.init(socketServer);
+  const mediasoup = await mediasoupServer.init();
+
+  await events.init({ socketServer: socketServer, handlers: handlers, mediasoup: mediasoup });
   return;
 }
 
